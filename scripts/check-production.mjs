@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {mkdirSync,writeFileSync} from 'node:fs';
+const base=process.env.API_BASE;
+if(!base) throw Error('Defina API_BASE.');
+const origin='https://joanadarknes.github.io';
+async function call(path,method='GET',body){const res=await fetch(base+path,{method,headers:{Origin:origin,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});assert.equal(res.headers.get('Access-Control-Allow-Origin'),origin);return {status:res.status,data:method==='OPTIONS'?null:await res.json()};}
+assert.equal((await call('/api/trips','OPTIONS')).status,204);
+let result=await call('/api/trips','POST',{name:'Verificação automática de publicação',members:['Teste Ana','Teste Bia','Teste Carla']});
+assert.equal(result.status,201);
+let trip=result.data;const [a,b,c]=trip.members.map(m=>m.id);const path='/api/trips/'+trip.id;
+mkdirSync('data',{recursive:true});
+writeFileSync('data/cleanup-smoke.sql',`DELETE FROM trips WHERE id='${trip.id}';\n`);
+result=await call(path+'/expenses','POST',{revision:0,description:'Teste jantar',amount:12000,payer:a,people:[a,b,c],date:'2026-10-12'});assert.equal(result.status,200);
+result=await call(path+'/expenses','POST',{revision:1,description:'Teste cinema',amount:6000,payer:b,people:[a,b,c],date:'2026-10-12'});assert.equal(result.status,200);
+assert.deepEqual(result.data.transfers,[{from:c,to:a,amount:6000}]);
+assert.equal((await call(path+'/members','POST',{revision:0,name:'Teste conflito'})).status,409);
+result=await call(path+'/payments','POST',{revision:2,from:c,to:a,amount:2000});assert.equal(result.status,200);assert.equal(result.data.transfers[0].amount,4000);
+result=await call(path+'/payments','POST',{revision:3,from:c,to:a,amount:4000});assert.equal(result.status,200);assert.deepEqual(result.data.transfers,[]);
+const shared=await call(path);assert.equal(shared.data.total,18000);assert.equal(shared.data.payments.length,2);
+console.log('API pública validada: criação, gastos, leitura compartilhada, conflito, baixa parcial e total, CORS.');
